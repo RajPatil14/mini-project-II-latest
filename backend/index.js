@@ -2,6 +2,9 @@ import express from 'express'
 import mongoose from 'mongoose'
 import cors from 'cors'
 import dotenv from 'dotenv'
+import { createServer } from 'http'
+import { randomBytes } from 'crypto'
+import { Server as SocketServer } from 'socket.io'
 import { fileURLToPath } from 'url'
 import { dirname, join } from 'path'
 import Driver from './models/Driver.js'
@@ -26,8 +29,6 @@ const __dirname = dirname(fileURLToPath(import.meta.url))
 dotenv.config({ path: join(__dirname, '.env') })
 
 const app = express()
-app.use(cors())
-app.use(express.json())
 
 const getLocalNetworkIp = () => {
   const interfaces = os.networkInterfaces()
@@ -64,14 +65,76 @@ const buildFrontendUrl = () => {
 }
 
 const FRONTEND_URL = buildFrontendUrl()
-const clientDistPath = join(__dirname, '..', 'dist')
 const ACTIVE_LOCATION_WINDOW_MS = 2 * 60 * 1000
+const LOCATION_UPDATE_INTERVAL_MS = 1000
+const lastLocationUpdateByTrip = new Map()
+
+const allowedOrigins = (process.env.CORS_ORIGINS || '')
+  .split(',')
+  .map(origin => origin.trim())
+  .filter(Boolean)
+
+const corsOptions = {
+  origin(origin, callback) {
+    if (!origin || allowedOrigins.length === 0 || allowedOrigins.includes(origin)) {
+      return callback(null, true)
+    }
+    return callback(new Error('Origin is not allowed by CORS'))
+  }
+}
+
+app.use(cors(corsOptions))
+app.use(express.json({ limit: '100kb' }))
+
+const httpServer = createServer(app)
+const io = new SocketServer(httpServer, { cors: corsOptions })
 
 const routes = [
   { id: 'R1', name: 'Kolhapur to Sangli' },
   { id: 'R2', name: 'Sangli to Kolhapur' },
   { id: 'R3', name: 'Route 3 - City Loop' }
 ]
+
+io.on('connection', socket => {
+  socket.on('subscribe-route', routeId => {
+    if (!routes.some(route => route.id === routeId)) {
+      return
+    }
+
+    if (socket.data.routeId) {
+      socket.leave(`route:${socket.data.routeId}`)
+    }
+
+    socket.data.routeId = routeId
+    socket.join(`route:${routeId}`)
+  })
+})
+
+const hasValidTrackingToken = (trip, token) =>
+  Boolean(token && trip?.trackingToken && token === trip.trackingToken)
+
+const parseCoordinates = ({ latitude, longitude, accuracy }) => {
+  const parsedLatitude = Number(latitude)
+  const parsedLongitude = Number(longitude)
+  const parsedAccuracy = accuracy == null ? undefined : Number(accuracy)
+
+  if (
+    !Number.isFinite(parsedLatitude) ||
+    !Number.isFinite(parsedLongitude) ||
+    parsedLatitude < -90 ||
+    parsedLatitude > 90 ||
+    parsedLongitude < -180 ||
+    parsedLongitude > 180
+  ) {
+    return null
+  }
+
+  return {
+    latitude: parsedLatitude,
+    longitude: parsedLongitude,
+    accuracy: Number.isFinite(parsedAccuracy) && parsedAccuracy >= 0 ? parsedAccuracy : undefined
+  }
+}
 
 const buildSeedData = async () => {
   const driverCount = await Driver.countDocuments()
@@ -195,7 +258,13 @@ app.get('/trip/:id', async (req, res) => {
     return res.status(404).json({ message: 'Trip not found' })
   }
 
-  res.json(trip)
+  if (!hasValidTrackingToken(trip, req.query.token)) {
+    return res.status(403).json({ message: 'Invalid or expired tracking link' })
+  }
+
+  const safeTrip = { ...trip }
+  delete safeTrip.trackingToken
+  res.json(safeTrip)
 })
 
 app.post('/attendance', async (req, res) => {
@@ -243,7 +312,8 @@ app.post('/start-trip', async (req, res) => {
     return res.status(400).json({ message: 'Bus must be free' })
   }
 
-  const trip = await Trip.create({ routeId, driverId, busId })
+  const trackingToken = randomBytes(32).toString('hex')
+  const trip = await Trip.create({ routeId, driverId, busId, trackingToken })
 
   driver.status = 'busy'
   await driver.save()
@@ -251,12 +321,13 @@ app.post('/start-trip', async (req, res) => {
   bus.status = 'busy'
   await bus.save()
 
-  const trackingUrl = `${FRONTEND_URL}/track?tripId=${trip._id}`
+  const trackingUrl = `${FRONTEND_URL}/track?tripId=${trip._id}&token=${trackingToken}`
   console.log(`SMS to ${driver.phone}: ${trackingUrl}`)
 
   res.json({
     message: 'Trip started',
     tripId: trip._id,
+    trackingToken,
     trackingUrl,
     driver,
     bus
@@ -264,14 +335,18 @@ app.post('/start-trip', async (req, res) => {
 })
 
 app.post('/end-trip', async (req, res) => {
-  const { tripId } = req.body
-  if (!tripId) {
-    return res.status(400).json({ message: 'tripId is required' })
+  const { tripId, trackingToken } = req.body
+  if (!tripId || !trackingToken) {
+    return res.status(400).json({ message: 'tripId and trackingToken are required' })
   }
 
   const trip = await Trip.findById(tripId)
   if (!trip) {
     return res.status(404).json({ message: 'Trip not found' })
+  }
+
+  if (!hasValidTrackingToken(trip, trackingToken)) {
+    return res.status(403).json({ message: 'Invalid or expired tracking link' })
   }
 
   const driver = await Driver.findById(trip.driverId)
@@ -292,6 +367,9 @@ app.post('/end-trip', async (req, res) => {
     bus.status = 'free'
     await bus.save()
   }
+
+  io.to(`route:${trip.routeId}`).emit('location:remove', { tripId: trip._id.toString() })
+  lastLocationUpdateByTrip.delete(trip._id.toString())
 
   res.json({ message: 'Trip ended', trip })
 })
@@ -340,55 +418,42 @@ app.post('/check-out', async (req, res) => {
 })
 
 app.post('/location/update', async (req, res) => {
-  const { tripId, latitude, longitude } = req.body
-  if (!tripId || latitude == null || longitude == null) {
-    return res.status(400).json({ message: 'tripId, latitude, and longitude are required' })
+  const { tripId, trackingToken } = req.body
+  const coordinates = parseCoordinates(req.body)
+  if (!tripId || !trackingToken || !coordinates) {
+    return res.status(400).json({ message: 'Valid tripId, trackingToken, latitude, and longitude are required' })
   }
 
-  const trip = await Trip.findById(tripId)
+  const trip = await Trip.findById(tripId).populate('busId')
   if (!trip) {
     return res.status(404).json({ message: 'Trip not found' })
+  }
+
+  if (!hasValidTrackingToken(trip, trackingToken)) {
+    return res.status(403).json({ message: 'Invalid or expired tracking link' })
   }
 
   if (trip.status !== 'active') {
     return res.status(400).json({ message: 'Trip is not active' })
   }
 
-  await Location.create({ tripId, latitude, longitude })
-  res.json({ message: 'Location updated' })
-})
-
-app.post('/update-location', async (req, res) => {
-  const data = req.body
-  const { lat, lng, speed } = data
-
-  if (lat == null || lng == null) {
-    return res.status(400).json({ message: 'lat and lng are required' })
+  const now = Date.now()
+  const previousUpdate = lastLocationUpdateByTrip.get(tripId) || 0
+  if (now - previousUpdate < LOCATION_UPDATE_INTERVAL_MS) {
+    return res.status(202).json({ message: 'Location update throttled' })
   }
 
-  await Location.create({ 
-    latitude: lat, 
-    longitude: lng, 
-    speed: speed || 40 
-  })
-
-  res.json({ message: 'Location updated' })
-})
-
-app.get('/get-location', async (req, res) => {
-  const latest = await Location.findOne().sort({ timestamp: -1 }).lean()
-  if (!latest) {
-    return res.json({
-      lat: 16.7440,
-      lng: 74.4600,
-      speed: 40
-    })
+  lastLocationUpdateByTrip.set(tripId, now)
+  const location = await Location.create({ tripId, ...coordinates })
+  const locationUpdate = {
+    tripId,
+    busNumber: trip.busId?.number || 'Unknown',
+    ...coordinates,
+    timestamp: location.timestamp
   }
-  res.json({
-    lat: latest.latitude,
-    lng: latest.longitude,
-    speed: latest.speed || 40
-  })
+
+  io.to(`route:${trip.routeId}`).emit('location:update', locationUpdate)
+  res.json({ message: 'Location updated', location: locationUpdate })
 })
 
 app.get('/seed', async (req, res) => {
@@ -508,12 +573,6 @@ const { routeId, manual_count } = req.body;
   }
 });
 
-app.use(express.static(clientDistPath))
-
-app.get('*', (req, res) => {
-  res.sendFile(join(clientDistPath, 'index.html'))
-})
-
 mongoose
   .connect(MONGO_URI)
   .then(() => {
@@ -521,13 +580,13 @@ mongoose
     return buildSeedData()
   })
   .then(() => {
-    const server = app.listen(PORT, () => {
+    const server = httpServer.listen(PORT, () => {
       console.log(`Server listening on http://localhost:${PORT}`)
     })
 
     server.on('error', error => {
       if (error.code === 'EADDRINUSE') {
-        console.error(`Port ${PORT} is already in use. Stop the old server or set a different PORT in server/.env.`)
+        console.error(`Port ${PORT} is already in use. Stop the old server or set a different PORT in backend/.env.`)
         process.exit(1)
       }
 

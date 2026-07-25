@@ -5,8 +5,10 @@ import { routes } from '../routes'
 
 const isLocalHost = hostname => hostname === 'localhost' || hostname === '127.0.0.1'
 
-const buildShareableTrackingUrl = tripId => {
-  const frontendUrl = new URL(`/track?tripId=${tripId}`, window.location.origin)
+const buildShareableTrackingUrl = (tripId, trackingToken) => {
+  const frontendUrl = new URL('/track', window.location.origin)
+  frontendUrl.searchParams.set('tripId', tripId)
+  frontendUrl.searchParams.set('token', trackingToken)
 
   if (!isLocalHost(frontendUrl.hostname)) {
     return frontendUrl.toString()
@@ -82,7 +84,10 @@ export default function GoesOnRoute() {
         busId
       })
       
-      let dynamicUrl = buildShareableTrackingUrl(response.data.tripId)
+      let dynamicUrl = buildShareableTrackingUrl(
+        response.data.tripId,
+        response.data.trackingToken
+      )
 
       try {
         const backendUrl = new URL(response.data.trackingUrl)

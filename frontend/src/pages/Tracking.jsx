@@ -6,6 +6,7 @@ import api from '../api'
 export default function Tracking() {
   const [searchParams] = useSearchParams()
   const tripId = searchParams.get('tripId')
+  const trackingToken = searchParams.get('token')
   const [trip, setTrip] = useState(null)
   const [message, setMessage] = useState('Open this page on the driver phone, then tap Start Tracking.')
   const [error, setError] = useState(null)
@@ -16,15 +17,17 @@ export default function Tracking() {
   const canTrack = useMemo(() => trip && trip.status === 'active', [trip])
 
   useEffect(() => {
-    if (!tripId) {
-      setError('Invalid tracking link. Trip ID is missing.')
+    if (!tripId || !trackingToken) {
+      setError('Invalid tracking link. Trip credentials are missing.')
       return
     }
 
     const loadTrip = async () => {
       setError(null)
       try {
-        const response = await api.get(`/trip/${tripId}`)
+        const response = await api.get(`/trip/${tripId}`, {
+          params: { token: trackingToken }
+        })
         setTrip(response.data)
         if (response.data.status === 'completed') {
           setMessage('Tracking already ended for this trip.')
@@ -35,7 +38,7 @@ export default function Tracking() {
     }
 
     loadTrip()
-  }, [tripId])
+  }, [tripId, trackingToken])
 
   useEffect(() => {
     return () => {
@@ -76,13 +79,15 @@ export default function Tracking() {
 
     watchIdRef.current = navigator.geolocation.watchPosition(
       async position => {
-        const { latitude, longitude } = position.coords
+        const { latitude, longitude, accuracy } = position.coords
 
         try {
           await api.post('/location/update', {
             tripId,
+            trackingToken,
             latitude,
-            longitude
+            longitude,
+            accuracy
           })
           setMessage('Tracking is active. Keep this page open until the trip ends.')
           setError(null)
@@ -103,7 +108,7 @@ export default function Tracking() {
   }
 
   const endTracking = async () => {
-    if (!tripId || isEnding) {
+    if (!tripId || !trackingToken || isEnding) {
       return
     }
 
@@ -112,7 +117,7 @@ export default function Tracking() {
     stopLocalTracking()
 
     try {
-      const response = await api.post('/end-trip', { tripId })
+      const response = await api.post('/end-trip', { tripId, trackingToken })
       setTrip(response.data.trip)
       setMessage('Tracking ended. You can close this page.')
     } catch (err) {
@@ -159,7 +164,7 @@ export default function Tracking() {
 
           <button
             type="button"
-            disabled={!tripId || isEnding || trip?.status === 'completed'}
+            disabled={!tripId || !trackingToken || isEnding || trip?.status === 'completed'}
             onClick={endTracking}
             className="flex w-full items-center justify-center gap-2 rounded-2xl bg-rose-600 px-5 py-4 text-sm font-bold uppercase tracking-wide text-white transition hover:bg-rose-500 disabled:cursor-not-allowed disabled:bg-slate-700 disabled:text-slate-400"
           >

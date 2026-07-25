@@ -4,6 +4,7 @@ import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet'
 import 'leaflet/dist/leaflet.css'
 import { Bus, UploadCloud, Users, MapPin, CheckCircle, XCircle, ChevronDown, Activity, Zap } from 'lucide-react'
 import L from 'leaflet'
+import { io } from 'socket.io-client'
 import api from '../api'
 
 // Fix default icon issue with Leaflet in React
@@ -73,9 +74,31 @@ export default function ExtraBus() {
       }
     }
 
+    const mergeLocation = location => {
+      setActiveLocations(current => {
+        const remaining = current.filter(item => item.tripId !== location.tripId)
+        return [...remaining, location]
+      })
+    }
+
+    const removeLocation = ({ tripId }) => {
+      setActiveLocations(current => current.filter(item => item.tripId !== tripId))
+    }
+
+    const socket = io(api.defaults.baseURL, {
+      transports: ['websocket', 'polling']
+    })
+
+    socket.on('connect', () => socket.emit('subscribe-route', selectedRoute))
+    socket.on('location:update', mergeLocation)
+    socket.on('location:remove', removeLocation)
+
     fetchLocations()
-    const interval = setInterval(fetchLocations, 3000) // Refresh every 3s
-    return () => clearInterval(interval)
+    const interval = setInterval(fetchLocations, 15000)
+    return () => {
+      clearInterval(interval)
+      socket.disconnect()
+    }
   }, [selectedRoute])
 
   const handleImageChange = (e) => {

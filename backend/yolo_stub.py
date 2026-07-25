@@ -4,8 +4,8 @@ from ultralytics import YOLO
 import sys
 import os
 
-# Load YOLO model (relative path to root model)
-model_path = os.path.join(os.path.dirname(__file__), '..', 'yolov8s.pt')
+# Load the model shipped with the backend service.
+model_path = os.path.join(os.path.dirname(__file__), 'yolov8s.pt')
 model = YOLO(model_path)
 
 def count_persons(img):
