@@ -21,7 +21,7 @@ export default function Reporting() {
       try {
         const response = await api.get(`/drivers/${routeId}`)
         setDrivers(response.data)
-      } catch (err) {
+      } catch {
         setError('Unable to load drivers for this route.')
       } finally {
         setLoading(false)

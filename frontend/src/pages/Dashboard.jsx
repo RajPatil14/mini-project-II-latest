@@ -1,49 +1,22 @@
+import { BusFront, ClipboardCheck, ImageUp, MapPinned, ShieldCheck, UserPlus, UsersRound } from 'lucide-react'
 import { Link } from 'react-router-dom'
 
-export default function Dashboard() {
-  return (
-    <main className="mx-auto w-full max-w-6xl px-4 py-14 sm:px-6">
-      <div className="rounded-[2rem] border border-slate-200/60 bg-white/95 p-10 shadow-[0_35px_60px_-35px_rgba(15,23,42,0.5)]">
-        <div className="mb-10 text-center">
-          <p className="inline-flex rounded-full bg-sky-100 px-4 py-2 text-xs font-semibold uppercase tracking-[0.32em] text-sky-700">Smart Bus Management</p>
-          <h1 className="mt-6 text-4xl font-semibold text-slate-950 sm:text-5xl">Driver Attendance & Route Tracking</h1>
-          <p className="mx-auto mt-4 max-w-2xl text-slate-600">Navigate dispatch, attendance and live route supervision with a modern dashboard made for fast decision making.</p>
-        </div>
+const portalCards = [
+  { to: '/passenger', title: 'Passenger portal', text: 'Track buses live and plan journeys with route timetables.', icon: UsersRound, tone: 'from-sky-500 to-cyan-400', tag: 'Open access' },
+  { to: '/driver', title: 'Driver portal', text: 'Manage attendance, dispatch, return-to-route and checkout.', icon: BusFront, tone: 'from-violet-500 to-fuchsia-500', tag: 'Password required' },
+  { to: '/admin', title: 'Admin command center', text: 'Monitor the fleet, driver status and extra-bus demand.', icon: ShieldCheck, tone: 'from-amber-400 to-orange-500', tag: 'Password required' }
+]
 
-        <div className="grid gap-6 md:grid-cols-4">
-          <Link
-            to="/reporting"
-            className="group overflow-hidden rounded-[1.75rem] border border-slate-200 bg-gradient-to-br from-slate-950 to-slate-900 px-8 py-10 text-center text-white shadow-2xl shadow-slate-900/20 transition duration-300 hover:-translate-y-1 hover:bg-slate-800"
-          >
-            <p className="text-lg font-semibold">Reporting</p>
-            <p className="mt-3 text-slate-300">Record driver attendance for each route and keep your logs accurate.</p>
-          </Link>
+const driverTools = [
+  { to: '/reporting', title: 'Attendance', icon: ClipboardCheck }, { to: '/driver-register', title: 'Register driver', icon: UserPlus }, { to: '/goes-on-route', title: 'Start a trip', icon: BusFront }, { to: '/came-on-route', title: 'Return resources', icon: MapPinned }, { to: '/check-out', title: 'Check out', icon: ClipboardCheck }
+]
+const adminTools = [
+  { to: '/admin/live', title: 'Live locations', icon: MapPinned }, { to: '/admin/drivers', title: 'Driver status', icon: UsersRound }, { to: '/admin/buses', title: 'Bus status', icon: BusFront }, { to: '/extra-bus', title: 'Extra bus allocation', icon: ImageUp }
+]
 
-          <Link
-            to="/goes-on-route"
-            className="group overflow-hidden rounded-[1.75rem] border border-slate-200 bg-white px-8 py-10 text-center text-slate-950 shadow-2xl shadow-slate-200/70 transition duration-300 hover:-translate-y-1 hover:border-slate-300"
-          >
-            <p className="text-lg font-semibold">Goes On Route</p>
-            <p className="mt-3 text-slate-500">Select route, choose a free driver, and assign a free bus number.</p>
-          </Link>
+export default function Dashboard({ portal }) {
+  const tools = portal === 'driver' ? driverTools : adminTools
+  if (portal) return <main className="mx-auto w-full max-w-6xl px-4 py-10 sm:px-6"><section className="rounded-[2rem] border border-white/10 bg-slate-900/80 p-8 shadow-2xl"><p className="text-xs font-bold uppercase tracking-[0.3em] text-sky-300">{portal} portal</p><h1 className="mt-3 text-3xl font-semibold text-white">{portal === 'driver' ? 'Route operations at your fingertips' : 'Fleet operations command center'}</h1><div className="mt-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">{tools.map(tool => { const IconComponent = tool.icon; return <Link key={tool.to} to={tool.to} className="group rounded-3xl border border-white/10 bg-white/5 p-6 transition hover:-translate-y-1 hover:border-sky-300/50 hover:bg-white/10"><IconComponent className="h-7 w-7 text-sky-300" /><p className="mt-8 font-semibold text-white">{tool.title}</p><p className="mt-2 text-sm text-slate-400">Open workspace →</p></Link> })}</div></section></main>
 
-          <Link
-            to="/came-on-route"
-            className="group overflow-hidden rounded-[1.75rem] border border-slate-200 bg-white px-8 py-10 text-center text-slate-950 shadow-2xl shadow-slate-200/70 transition duration-300 hover:-translate-y-1 hover:border-slate-300"
-          >
-            <p className="text-lg font-semibold">Came On Route</p>
-            <p className="mt-3 text-slate-500">Select route, choose driver and bus, then mark as free.</p>
-          </Link>
-
-          <Link
-            to="/check-out"
-            className="group overflow-hidden rounded-[1.75rem] border border-slate-200 bg-gradient-to-br from-rose-600 to-rose-700 px-8 py-10 text-center text-white shadow-2xl shadow-rose-600/20 transition duration-300 hover:-translate-y-1 hover:bg-rose-800"
-          >
-            <p className="text-lg font-semibold">Check Out</p>
-            <p className="mt-3 text-rose-100">Mark drivers as off-duty after completing their shift.</p>
-          </Link>
-        </div>
-      </div>
-    </main>
-  )
+  return <main className="mx-auto w-full max-w-7xl px-4 py-12 sm:px-6"><section className="text-center"><p className="text-sm font-bold uppercase tracking-[0.32em] text-sky-300">Smart mobility operations</p><h1 className="mx-auto mt-5 max-w-4xl text-4xl font-semibold tracking-tight text-white sm:text-6xl">One connected system for every journey.</h1><p className="mx-auto mt-5 max-w-2xl text-lg text-slate-300">Choose your portal to track buses, manage route operations, or supervise the fleet.</p></section><div className="mt-12 grid gap-6 lg:grid-cols-3">{portalCards.map(card => { const IconComponent = card.icon; return <Link key={card.to} to={card.to} className="group relative overflow-hidden rounded-[2rem] border border-white/10 bg-slate-900/80 p-8 shadow-2xl transition hover:-translate-y-2"><div className={`absolute inset-x-0 top-0 h-1 bg-gradient-to-r ${card.tone}`} /><div className={`flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-br ${card.tone} text-slate-950`}><IconComponent className="h-7 w-7" /></div><p className="mt-8 text-xs font-semibold uppercase tracking-[0.22em] text-slate-400">{card.tag}</p><h2 className="mt-3 text-2xl font-semibold text-white">{card.title}</h2><p className="mt-3 leading-7 text-slate-300">{card.text}</p><p className="mt-8 font-semibold text-sky-300">Enter portal →</p></Link> })}</div></main>
 }

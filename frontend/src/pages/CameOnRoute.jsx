@@ -31,7 +31,7 @@ export default function CameOnRoute() {
         ])
         setDrivers(driversRes.data)
         setBuses(busesRes.data)
-      } catch (err) {
+      } catch {
         setError('Unable to load busy drivers or buses.')
       } finally {
         setLoading(false)

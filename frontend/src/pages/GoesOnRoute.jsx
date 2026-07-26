@@ -60,7 +60,7 @@ export default function GoesOnRoute() {
         ])
         setDrivers(driversRes.data)
         setBuses(busesRes.data)
-      } catch (err) {
+      } catch {
         setError('Unable to load available drivers or buses.')
       } finally {
         setLoading(false)

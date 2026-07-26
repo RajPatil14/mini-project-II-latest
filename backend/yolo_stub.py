@@ -4,22 +4,20 @@ from ultralytics import YOLO
 import sys
 import os
 
-# Load the model shipped with the backend service.
-model_path = os.path.join(os.path.dirname(__file__), 'yolov8s.pt')
+# YOLOv8m is more accurate in busy scenes than the smaller YOLOv8s model.
+# It uses more memory and takes longer, but crowd counts are more reliable.
+model_path = os.path.join(os.path.dirname(__file__), 'yolov8m.pt')
 model = YOLO(model_path)
 
 def count_persons(img):
     """Count person (cls=0) in image using YOLO"""
     if img is None:
         return 0
-    results = model(img, verbose=False)
-    count = 0
-    for r in results:
-        if r.boxes is not None:
-            for box in r.boxes:
-                if int(box.cls[0]) == 0:  # person class
-                    count += 1
-    return count
+    # Higher image size helps retain small/partially occluded people. Restricting
+    # inference to COCO class 0 prevents non-person objects from being counted.
+    results = model(img, classes=[0], conf=0.30, iou=0.50, imgsz=960, verbose=False)
+    boxes = results[0].boxes if results else None
+    return len(boxes) if boxes is not None else 0
 
 def main():
     if len(sys.argv) != 5:

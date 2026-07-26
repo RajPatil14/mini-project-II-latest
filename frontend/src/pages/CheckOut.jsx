@@ -23,7 +23,7 @@ export default function CheckOut() {
       try {
         const response = await api.get(`/drivers/present/${routeId}`)
         setDrivers(response.data)
-      } catch (err) {
+      } catch {
         setError('Unable to load present drivers for this route.')
       } finally {
         setLoading(false)
@@ -38,7 +38,7 @@ export default function CheckOut() {
     setError(null)
 
     try {
-      const response = await api.post('/check-out', { driverId })
+      await api.post('/check-out', { driverId })
       setMessage('Driver checked out successfully.')
       setDrivers(prev => prev.filter(driver => driver._id !== driverId))
       setDriverId('')

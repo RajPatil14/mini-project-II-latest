@@ -1,0 +1,18 @@
+import { useEffect, useState } from 'react'
+import { BusFront, Clock3, MapPinned, Navigation } from 'lucide-react'
+import { io } from 'socket.io-client'
+import api from '../api'
+import LiveBusMap from '../components/LiveBusMap'
+
+
+export default function PassengerPortal() {
+  const [routes, setRoutes] = useState([]); const [routeId, setRouteId] = useState(''); const [locations, setLocations] = useState([]); const [timetable, setTimetable] = useState([])
+  useEffect(() => { api.get('/routes').then(r => setRoutes(r.data)).catch(() => {}) }, [])
+  useEffect(() => {
+    if (!routeId) return undefined
+    const refresh = async () => { const [locationsRes, timetableRes] = await Promise.all([api.get(`/locations/active/${routeId}`), api.get(`/timetable/${routeId}`)]); setLocations(locationsRes.data); setTimetable(timetableRes.data.departures) }
+    refresh().catch(() => {}); const socket = io(api.defaults.baseURL, { transports: ['websocket', 'polling'] }); socket.on('connect', () => socket.emit('subscribe-route', routeId)); socket.on('location:update', update => setLocations(current => [...current.filter(item => item.tripId !== update.tripId), update])); socket.on('location:remove', ({ tripId }) => setLocations(current => current.filter(item => item.tripId !== tripId))); const interval = setInterval(() => refresh().catch(() => {}), 15000); return () => { socket.disconnect(); clearInterval(interval) }
+  }, [routeId])
+  const selectRoute = event => { setRouteId(event.target.value); setLocations([]); setTimetable([]) }
+  return <main className="mx-auto w-full max-w-7xl px-4 py-10 sm:px-6"><div className="mb-8"><p className="text-xs font-bold uppercase tracking-[0.3em] text-sky-300">Passenger portal</p><h1 className="mt-3 text-3xl font-semibold text-white">Plan your trip with confidence</h1><p className="mt-2 text-slate-400">Choose a route to see live buses and today’s scheduled departures.</p></div><div className="grid gap-6 lg:grid-cols-[320px_1fr]"><aside className="rounded-[2rem] border border-white/10 bg-slate-900/80 p-6"><label className="text-sm font-medium text-slate-200">Select route<select value={routeId} onChange={selectRoute} className="mt-3 w-full rounded-2xl border border-white/10 bg-slate-950 px-4 py-3 text-white"><option value="">Choose your route</option>{routes.map(route => <option key={route.id} value={route.id}>{route.name || route.label}</option>)}</select></label><div className="mt-7"><div className="flex items-center gap-2 text-sky-300"><Clock3 className="h-5 w-5" /><h2 className="font-semibold">Today’s timetable</h2></div>{routeId ? <div className="mt-4 grid grid-cols-2 gap-2">{timetable.map(time => <span key={time} className="rounded-xl bg-white/5 px-3 py-2 text-center text-sm text-slate-200">{time}</span>)}</div> : <p className="mt-4 text-sm text-slate-500">Select a route to see departures.</p>}</div></aside><section className="overflow-hidden rounded-[2rem] border border-white/10 bg-slate-900/80"><div className="flex items-center justify-between p-6"><div><div className="flex items-center gap-2 text-sky-300"><MapPinned className="h-5 w-5" /><span className="font-semibold">Live bus map</span></div><p className="mt-1 text-sm text-slate-400">{locations.length} active bus{locations.length === 1 ? '' : 'es'} currently visible</p></div><Navigation className="h-6 w-6 text-sky-300" /></div><div className="h-[450px] bg-slate-800">{routeId ? <LiveBusMap locations={locations} /> : <div className="flex h-full flex-col items-center justify-center text-slate-500"><BusFront className="h-12 w-12" /><p className="mt-4">Select a route to open the map.</p></div>}</div></section></div></main>
+}

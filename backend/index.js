@@ -65,9 +65,12 @@ const buildFrontendUrl = () => {
 }
 
 const FRONTEND_URL = buildFrontendUrl()
+const DRIVER_PORTAL_PASSWORD = process.env.DRIVER_PORTAL_PASSWORD || 'driver@123'
+const ADMIN_PORTAL_PASSWORD = process.env.ADMIN_PORTAL_PASSWORD || 'admin@123'
 const ACTIVE_LOCATION_WINDOW_MS = 2 * 60 * 1000
 const LOCATION_UPDATE_INTERVAL_MS = 1000
 const lastLocationUpdateByTrip = new Map()
+const portalSessions = new Map()
 
 const allowedOrigins = (process.env.CORS_ORIGINS || '')
   .split(',')
@@ -112,6 +115,17 @@ io.on('connection', socket => {
 
 const hasValidTrackingToken = (trip, token) =>
   Boolean(token && trip?.trackingToken && token === trip.trackingToken)
+
+const requirePortalAccess = role => (req, res, next) => {
+  const token = req.get('Authorization')?.replace(/^Bearer\s+/i, '')
+  const session = token && portalSessions.get(token)
+
+  if (!session || session.role !== role) {
+    return res.status(401).json({ message: `${role} access is required` })
+  }
+
+  next()
+}
 
 const parseCoordinates = ({ latitude, longitude, accuracy }) => {
   const parsedLatitude = Number(latitude)
@@ -169,13 +183,44 @@ app.get('/routes', (req, res) => {
   return res.json(routes)
 })
 
+app.post('/access/verify', (req, res) => {
+  const { role, password } = req.body
+  const expectedPassword = role === 'driver' ? DRIVER_PORTAL_PASSWORD : role === 'admin' ? ADMIN_PORTAL_PASSWORD : null
+
+  if (!expectedPassword || password !== expectedPassword) {
+    return res.status(401).json({ message: 'Incorrect password' })
+  }
+
+  const token = randomBytes(32).toString('hex')
+  portalSessions.set(token, { role, createdAt: Date.now() })
+  res.json({ token, role })
+})
+
+app.get('/timetable/:routeId', (req, res) => {
+  const { routeId } = req.params
+  if (!routes.some(route => route.id === routeId)) {
+    return res.status(404).json({ message: 'Route not found' })
+  }
+
+  const departures = []
+  for (let minutes = 8 * 60; minutes <= 20 * 60; minutes += 30) {
+    const hours = Math.floor(minutes / 60)
+    const mins = String(minutes % 60).padStart(2, '0')
+    const suffix = hours >= 12 ? 'PM' : 'AM'
+    const displayHour = hours % 12 || 12
+    departures.push(`${displayHour}:${mins} ${suffix}`)
+  }
+
+  res.json({ routeId, departures })
+})
+
 app.get('/drivers/:routeId', async (req, res) => {
   const { routeId } = req.params
   const drivers = await Driver.find({ routeId }).sort('name')
   res.json(drivers)
 })
 
-app.post('/drivers/register', async (req, res) => {
+app.post('/drivers/register', requirePortalAccess('driver'), async (req, res) => {
   const { routeId, name, phone } = req.body
 
   if (!routeId || !name || !phone) {
@@ -267,7 +312,7 @@ app.get('/trip/:id', async (req, res) => {
   res.json(safeTrip)
 })
 
-app.post('/attendance', async (req, res) => {
+app.post('/attendance', requirePortalAccess('driver'), async (req, res) => {
   const { routeId, driverId } = req.body
   if (!routeId || !driverId) {
     return res.status(400).json({ message: 'routeId and driverId are required' })
@@ -287,7 +332,7 @@ app.post('/attendance', async (req, res) => {
   res.json({ message: 'Attendance recorded', driver })
 })
 
-app.post('/start-trip', async (req, res) => {
+app.post('/start-trip', requirePortalAccess('driver'), async (req, res) => {
   const { routeId, driverId, busId } = req.body
   if (!routeId || !driverId || !busId) {
     return res.status(400).json({ message: 'routeId, driverId, and busId are required' })
@@ -374,7 +419,7 @@ app.post('/end-trip', async (req, res) => {
   res.json({ message: 'Trip ended', trip })
 })
 
-app.post('/free-resources', async (req, res) => {
+app.post('/free-resources', requirePortalAccess('driver'), async (req, res) => {
   const { routeId, driverId, busId } = req.body
   if (!routeId || !driverId || !busId) {
     return res.status(400).json({ message: 'routeId, driverId, and busId are required' })
@@ -400,7 +445,7 @@ app.post('/free-resources', async (req, res) => {
   res.json({ message: 'Driver and bus marked as free', driver, bus })
 })
 
-app.post('/check-out', async (req, res) => {
+app.post('/check-out', requirePortalAccess('driver'), async (req, res) => {
   const { driverId } = req.body
   if (!driverId) {
     return res.status(400).json({ message: 'driverId is required' })
@@ -487,7 +532,19 @@ app.get('/locations/active/:routeId', async (req, res) => {
   }
 });
 
-app.post('/extra-bus/evaluate', upload.array('images', 4), async (req, res) => {
+app.get('/admin/drivers/:routeId', requirePortalAccess('admin'), async (req, res) => {
+  const { routeId } = req.params
+  const drivers = await Driver.find({ routeId }).sort('name').lean()
+  res.json(drivers)
+})
+
+app.get('/admin/buses/:routeId', requirePortalAccess('admin'), async (req, res) => {
+  const { routeId } = req.params
+  const buses = await Bus.find({ routeId }).sort('number').lean()
+  res.json(buses)
+})
+
+app.post('/extra-bus/evaluate', requirePortalAccess('admin'), upload.array('images', 4), async (req, res) => {
 const { routeId, manual_count } = req.body;
 
   if (!routeId) {
@@ -500,6 +557,7 @@ const { routeId, manual_count } = req.body;
   }
 
   let passengerCount = 0;
+  let analysisError = null;
 
   // Create temp dir
   const tempDir = path.join(os.tmpdir(), `yolo-${uuidv4()}`);
@@ -523,11 +581,13 @@ const { routeId, manual_count } = req.body;
       passengerCount = parseInt(manual_count);
     } else if (stdout) {
       passengerCount = parseInt(stdout.trim(), 10);
-      if (isNaN(passengerCount)) passengerCount = 6;
+      if (isNaN(passengerCount)) {
+        throw new Error('YOLO did not return a valid passenger count');
+      }
     }
   } catch (err) {
     console.error('Error running YOLO script:', err);
-    passengerCount = Math.floor(Math.random() * (110 - 60 + 1)) + 60;
+    analysisError = err;
   } finally {
     // Cleanup temp files
     try {
@@ -570,6 +630,12 @@ const { routeId, manual_count } = req.body;
 
   } catch (error) {
     res.status(500).json({ message: 'Error evaluating extra bus', error: error.message });
+  }
+
+  if (analysisError) {
+    return res.status(503).json({
+      message: 'Passenger analysis is unavailable. Verify that Python, Ultralytics, OpenCV, and the YOLO model are installed on the server.'
+    });
   }
 });
 
